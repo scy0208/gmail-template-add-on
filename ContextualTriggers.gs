@@ -1,28 +1,54 @@
-function showHomePage() {
-  var card = CardService.newCardBuilder()
-      .setHeader(CardService.newCardHeader().setTitle('Hello World'))
-      .build();
-  return [card];
-}
-
 function showInitialCard() {
   // Create a card builder with an action button to show email labels
   var cardBuilder = CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader()
-      .setTitle('Get Email Labeling')
+      .setTitle('WiseMail Email Helper')
       .setImageUrl('https://www.gstatic.com/images/icons/material/system/1x/label_googblue_48dp.png'))
     .addSection(CardService.newCardSection()
       .addWidget(CardService.newTextButton()
-        .setText("推荐回复模版")
+        .setText("Response Template Suggestion")
         .setOnClickAction(CardService.newAction()
           .setFunctionName("onGmailMessageOpen"))));
 
   return [cardBuilder.build()];
 }
 
-function onGmailMessageOpen(e) {
-  console.log("Request start");
+function getAllLabelsMap() {
+  var url = "https://www.googleapis.com/gmail/v1/users/me/labels";
+  var headers = {
+    "Authorization": "Bearer " + ScriptApp.getOAuthToken()
+  };
 
+  var options = {
+    "method": "get",
+    "headers": headers,
+    "muteHttpExceptions": true
+  };
+
+  var response = UrlFetchApp.fetch(url, options);
+  var labelList = JSON.parse(response.getContentText()).labels;
+
+  var labelMap = {}; // To hold the map of label_id: label_name
+  for (var i = 0; i < labelList.length; i++) {
+    labelMap[labelList[i].id] = labelList[i].name;
+  }
+
+  return labelMap;
+}
+
+function getLabelIdsByNames(labelMap, labelNames) {
+  var labelIds = [];
+
+  for (var id in labelMap) {
+    if (labelNames.indexOf(labelMap[id]) !== -1) {
+      labelIds.push(id);
+    }
+  }
+
+  return labelIds;
+}
+
+function onGmailMessageOpen(e) {
   var accessToken = e.messageMetadata.accessToken;
   GmailApp.setCurrentMessageAccessToken(accessToken);
   var messageId = e.messageMetadata.messageId;
@@ -33,28 +59,31 @@ function onGmailMessageOpen(e) {
 
   var cardBuilder = CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader()
-      .setTitle('Get Email Labeling')
+      .setTitle('Template Suggestion')
       .setImageUrl('https://www.gstatic.com/images/icons/material/system/1x/label_googblue_48dp.png'));
 
   var labelNames = threadLabels.map(function(label) {
     return label.getName();
   });
-
   console.log("labels: " + labelNames)
 
-  var templatesGroupedByLabel = getTemplatesForLabels(email, labelNames); // Note the changed function name
+  var labelMap = getAllLabelsMap()
+  var labelIds = getLabelIdsByNames(labelMap, labelNames);
+  console.log("labelIds: " + labelIds)
 
-  for (var label in templatesGroupedByLabel) {
-    var templates = templatesGroupedByLabel[label];
+  var templatesGroupedByLabel = getTemplatesForLabels2(email, labelIds); // Note the changed function name
+
+  for (var labelId in templatesGroupedByLabel) {
+    var templates = templatesGroupedByLabel[labelId];
 
     for (var j = 0; j < templates.length; j++) {
-      var template = templates[j] || "";
+      var template = templates[j].template || "";
       var composeAction = CardService.newAction()
         .setFunctionName('createReplyDraft')
         .setParameters({"template": template});
 
       var section = CardService.newCardSection()
-        .setHeader(label)
+        .setHeader(labelMap[labelId])
         .addWidget(CardService.newTextParagraph().setText(template))
         .addWidget(
           CardService.newTextButton()
@@ -94,11 +123,11 @@ function getTemplatesForLabels(email, labels) {
   return templatesGroupedByLabel;
 }
 
-function getTemplateForLabel(email, label) {
-  var apiUrl = 'https://api.llmfeedback.com/api/v0/get-email-template';
+function getTemplatesForLabels2(email, labelIds) {
+  var apiUrl = 'https://api.llmfeedback.com/api/v0/get-templates-by-labels';
   var payload = {
     "email": email,
-    "labels": [label]
+    "labels": labelIds
   }
   
   var options = {
